@@ -1,0 +1,64 @@
+name:                haskell-server-example
+version:             0.1.0.0
+github:              "githubuser/haskell-server-example"
+license:             BSD3
+author:              "Author name here"
+maintainer:          "example@example.com"
+copyright:           "2019 Author name here"
+
+extra-source-files:
+- README.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/githubuser/haskell-server-example#readme>
+
+dependencies:
+- base >= 4.8 && < 4.13
+- wai == 3.2.*
+- warp == 3.2.*
+- http-types >= 0.9 && < 0.13
+- bytestring == 0.10.*
+- text == 1.2.*
+- optparse-applicative >= 0.13 && < 0.15
+- mtl == 2.2.*
+- time >= 1.4 && < 1.10
+- old-locale >= 1.0 && < 1.5
+- contravariant >= 1.4 && < 1.6
+- sqlite-simple == 0.4.*
+- sqlite-simple-errors == 0.6.*
+- semigroups == 0.18.*
+- transformers >= 0.4 && < 0.6
+- lens >= 4.15 && < 4.18
+- waargonaut >= 0.6 && < 0.7
+- attoparsec >= 0.13 && < 0.15
+
+library:
+  source-dirs: src
+
+executables:
+  haskell-server-example-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - haskell-server-example
+
+tests:
+  haskell-server-example-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - haskell-server-example
