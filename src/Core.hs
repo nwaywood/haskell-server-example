@@ -12,7 +12,7 @@ import           Control.Monad.IO.Class             (liftIO)
 import           Network.Wai                        (Application, Request,
                                                      Response, pathInfo,
                                                      requestMethod, responseLBS,
-                                                     strictRequestBody)
+                                                     strictRequestBody, responseFile)
 import           Network.Wai.Handler.Warp           (run)
 
 import           Network.HTTP.Types                 (Status, hContentType,
@@ -40,7 +40,7 @@ import           Conf                       (Conf(..), firstAppConfig)
 import qualified DB
 import           Types                      (ContentType (..),
                                                      Error (..),
-                                                     RqType (AddRq, ListRq, ViewRq),
+                                                     RqType (AddRq, ListRq, ViewRq, StaticRq),
                                                      encodeComment, encodeTopic,
                                                      mkCommentText, mkTopic,
                                                      renderContentType)
@@ -150,6 +150,7 @@ handleRequest db rqType = case rqType of
   AddRq t c -> resp200 PlainText "Success" <$ DB.addCommentToTopic db t c
   ViewRq t  -> resp200Json (E.list encodeComment) <$> DB.getComments db t
   ListRq    -> resp200Json (E.list encodeTopic)   <$> DB.getTopics db
+  StaticRq  -> pure $ responseFile status200 [("Content-Type", "text/html")] "frontend/index.html" Nothing
 
 mkRequest
   :: Request
@@ -157,13 +158,15 @@ mkRequest
 mkRequest rq =
   liftEither =<< case ( pathInfo rq, requestMethod rq ) of
     -- Commenting on a given topic
-    ( [t, "add"], "POST" ) -> liftIO $ mkAddRequest t <$> strictRequestBody rq
+    ( ["api", t, "add"], "POST" ) -> liftIO $ mkAddRequest t <$> strictRequestBody rq
     -- View the comments on a given topic
-    ( [t, "view"], "GET" ) -> pure ( mkViewRequest t )
+    ( ["api", t, "view"], "GET" ) -> pure ( mkViewRequest t )
     -- List the current topics
-    ( ["list"], "GET" )    -> pure mkListRequest
+    ( ["api", "list"], "GET" )    -> pure mkListRequest
     -- Finally we don't care about any other requests so build an Error response
-    _                      -> pure ( Left UnknownRoute )
+    ( "api" : t, _)       -> pure ( Left UnknownRoute )
+    -- Serve the frontend
+    ( _, _) -> pure $ Right StaticRq
 
 mkAddRequest
   :: Text
