@@ -13,3 +13,8 @@ $ stack exec haskell-server-example-exe
 or
 
 `$ stack run`
+
+
+## Interactive mode
+
+`$ stack ghci`
