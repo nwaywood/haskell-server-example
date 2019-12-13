@@ -4,7 +4,7 @@ import Browser
 import Button exposing (..)
 import Element exposing (..)
 import Element.Border as Border
-import Element.Font exposing (size)
+import Element.Font exposing (bold, size)
 import Element.Input as Input
 import Html exposing (Html)
 import Http
@@ -32,7 +32,22 @@ type alias Model =
     { topics : Status (List String)
     , currentTopic : SelectedTopic String
     , comments : CommentStatus (List Comment)
+    , newTopic : Maybe String
+    , newComment : Maybe String
+    , submitStatus : SubmitStatus
     }
+
+
+type SelectedTopic a
+    = NoTopic
+    | Topic a
+
+
+type SubmitStatus
+    = FailSubmit
+    | NoSubmit
+    | SucceedSubmit
+    | LoadingSubmit
 
 
 type alias Comment =
@@ -41,11 +56,6 @@ type alias Comment =
     , text : String
     , time : String
     }
-
-
-type SelectedTopic t
-    = NoTopic
-    | Topic t
 
 
 type CommentStatus s
@@ -63,7 +73,15 @@ type Status a
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { topics = Loading, comments = NotLoadedC, currentTopic = NoTopic }, getTopics )
+    ( { topics = Loading
+      , comments = NotLoadedC
+      , currentTopic = NoTopic
+      , newTopic = Nothing
+      , newComment = Nothing
+      , submitStatus = NoSubmit
+      }
+    , getTopics
+    )
 
 
 
@@ -72,9 +90,13 @@ init _ =
 
 type Msg
     = ReloadTopics
+    | OnChangeTopic String
+    | OnChangeComment String
+    | OnSubmitComment
     | SelectTopic String
     | GotTopics (Result Http.Error (List String))
     | GotComments (Result Http.Error (List Comment))
+    | GotSubmitResult (Result Http.Error String)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -82,6 +104,38 @@ update msg model =
     case msg of
         ReloadTopics ->
             ( { model | topics = Loading }, getTopics )
+
+        OnChangeTopic t ->
+            ( { model
+                | newTopic =
+                    if t == "" then
+                        Nothing
+
+                    else
+                        Just t
+              }
+            , Cmd.none
+            )
+
+        OnChangeComment t ->
+            ( { model
+                | newComment =
+                    if t == "" then
+                        Nothing
+
+                    else
+                        Just t
+              }
+            , Cmd.none
+            )
+
+        OnSubmitComment ->
+            case ( model.newTopic, model.newComment ) of
+                ( Just t, Just c ) ->
+                    ( { model | submitStatus = LoadingSubmit }, submitComment t c )
+
+                _ ->
+                    ( model, Cmd.none )
 
         SelectTopic t ->
             case model.currentTopic of
@@ -111,6 +165,14 @@ update msg model =
                 Err _ ->
                     ( { model | comments = FailureC }, Cmd.none )
 
+        GotSubmitResult result ->
+            case result of
+                Ok s ->
+                    ( { model | submitStatus = SucceedSubmit, newTopic = Nothing, newComment = Nothing }, getTopics )
+
+                Err _ ->
+                    ( { model | submitStatus = FailSubmit }, Cmd.none )
+
 
 
 -- SUBSCRIPTIONS
@@ -130,24 +192,85 @@ view model =
     layout [] <|
         column [ padding 12, spacing 12, width fill ]
             [ el [ size 24 ] <| text "Amazing Reddit Clone"
+            , viewCommentSubmit model
             , button [ padding 12 ]
                 { onPress = Just ReloadTopics
                 , label = text "Refresh Topics"
                 }
             , row [ width fill, spaceEvenly ]
-                [ el [ width fill, alignTop ] (viewTopics model.topics)
+                [ el [ width fill, alignTop ] (viewTopics model)
                 , el [ width fill, alignTop ] (viewComments model.comments)
                 ]
             ]
 
 
-viewTopics : Status (List String) -> Element Msg
-viewTopics topics =
+viewCommentSubmit : Model -> Element Msg
+viewCommentSubmit model =
+    row [ spacing 12 ]
+        [ Input.text []
+            { onChange = OnChangeTopic
+            , text =
+                case model.newTopic of
+                    Just s ->
+                        s
+
+                    Nothing ->
+                        ""
+            , label = Input.labelAbove [] (text "Topic")
+            , placeholder = Just (Input.placeholder [] (text "New Topic"))
+            }
+        , Input.text []
+            { onChange = OnChangeComment
+            , text =
+                case model.newComment of
+                    Just s ->
+                        s
+
+                    Nothing ->
+                        ""
+            , label = Input.labelAbove [] (text "Comment")
+            , placeholder = Just (Input.placeholder [] (text "New Comment"))
+            }
+        , button [ centerY, padding 12 ] { onPress = Just OnSubmitComment, label = text "Submit" }
+        , viewSubmitStatus model
+        ]
+
+
+viewSubmitStatus : Model -> Element Msg
+viewSubmitStatus model =
+    case model.submitStatus of
+        FailSubmit ->
+            text "Failed to post new comment"
+
+        LoadingSubmit ->
+            text "Submitting..."
+
+        SucceedSubmit ->
+            text "Successfully submitted new comment"
+
+        NoSubmit ->
+            text ""
+
+
+viewTopics : Model -> Element Msg
+viewTopics model =
     let
         topicEl t =
-            Input.button [] { onPress = Just (SelectTopic t), label = text t }
+            Input.button
+                (case model.currentTopic of
+                    Topic top ->
+                        if top == t then
+                            [ bold ]
+
+                        else
+                            []
+
+                    NoTopic ->
+                        []
+                )
+                { onPress = Just (SelectTopic t), label = text t }
     in
-    case topics of
+    case model.topics of
         Failure ->
             el [] <| text "Failed to load topics"
 
@@ -216,6 +339,15 @@ getComments t =
     Http.get
         { url = "/api/" ++ t ++ "/view"
         , expect = Http.expectJson GotComments commentsDecoder
+        }
+
+
+submitComment : String -> String -> Cmd Msg
+submitComment topic comment =
+    Http.post
+        { url = "/api/" ++ topic ++ "/add"
+        , body = Http.stringBody "text/plain" comment
+        , expect = Http.expectString GotSubmitResult
         }
 
 
