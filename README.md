@@ -1,5 +1,11 @@
 # haskell-server-example
 
+Simple Haskell server with the backend from qfpl's [applied-fp-course](https://github.com/qfpl/applied-fp-course) and an Elm frontend
+
+## Prerequisites
+
+- SQLite setup on your machine
+
 ## Usage
 
 `$ stack setup`
