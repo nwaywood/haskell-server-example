@@ -1,8 +1,5 @@
 module Main exposing (..)
 
--- import Html.Attributes exposing (..)
--- import Html.Events exposing (..)
-
 import Browser
 import Button exposing (..)
 import Element exposing (..)
@@ -132,12 +129,15 @@ view : Model -> Html Msg
 view model =
     layout [] <|
         column [ padding 12, spacing 12, width fill ]
-            [ el [ size 24 ] <| text "Topics"
+            [ el [ size 24 ] <| text "Amazing Reddit Clone"
             , button [ padding 12 ]
                 { onPress = Just ReloadTopics
-                , label = text "Refresh"
+                , label = text "Refresh Topics"
                 }
-            , row [ width fill, spaceEvenly ] [ viewTopics model.topics, el [ width fill ] (text "test") ]
+            , row [ width fill, spaceEvenly ]
+                [ el [ width fill, alignTop ] (viewTopics model.topics)
+                , el [ width fill, alignTop ] (viewComments model.comments)
+                ]
             ]
 
 
@@ -158,7 +158,37 @@ viewTopics topics =
             text "No topics available"
 
         Success ts ->
-            column [ spacing 12, width fill ] (List.map topicEl ts)
+            column [ spacing 12 ] (List.map topicEl ts)
+
+
+viewComments : CommentStatus (List Comment) -> Element Msg
+viewComments comments =
+    case comments of
+        FailureC ->
+            el [] <| text "Failed to load comments"
+
+        LoadingC ->
+            text "Loading..."
+
+        NotLoadedC ->
+            text ""
+
+        SuccessC [] ->
+            text "No comments available"
+
+        SuccessC cs ->
+            column [ spacing 12, width fill ] (List.map viewComment cs)
+
+
+viewComment : Comment -> Element Msg
+viewComment c =
+    column [ Border.widthEach { edges | bottom = 1 }, width fill, paddingEach { edges | bottom = 12 } ]
+        [ el [] <| text c.text
+        , row [ spacing 12 ]
+            [ text <| String.fromInt c.id
+            , text c.time
+            ]
+        ]
 
 
 edges =
@@ -187,6 +217,10 @@ getComments t =
         { url = "/api/" ++ t ++ "/view"
         , expect = Http.expectJson GotComments commentsDecoder
         }
+
+
+
+-- JSON decoders
 
 
 topicDecoder : Decoder (List String)
