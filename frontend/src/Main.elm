@@ -8,9 +8,10 @@ import Button exposing (..)
 import Element exposing (..)
 import Element.Border as Border
 import Element.Font exposing (size)
+import Element.Input as Input
 import Html exposing (Html)
 import Http
-import Json.Decode exposing (Decoder, bool, field, int, list, map4, string)
+import Json.Decode exposing (Decoder, field, int, list, map4, string)
 
 
 
@@ -30,15 +31,42 @@ main =
 -- MODEL
 
 
-type Model
-    = Failure
-    | Loading
-    | Success (List String)
+type alias Model =
+    { topics : Status (List String)
+    , currentTopic : SelectedTopic String
+    , comments : CommentStatus (List Comment)
+    }
+
+
+type alias Comment =
+    { id : Int
+    , topic : String
+    , text : String
+    , time : String
+    }
+
+
+type SelectedTopic t
+    = NoTopic
+    | Topic t
+
+
+type CommentStatus s
+    = LoadingC
+    | NotLoadedC
+    | FailureC
+    | SuccessC s
+
+
+type Status a
+    = Loading
+    | Failure
+    | Success a
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( Loading, getTodos )
+    ( { topics = Loading, comments = NotLoadedC, currentTopic = NoTopic }, getTopics )
 
 
 
@@ -46,23 +74,45 @@ init _ =
 
 
 type Msg
-    = Reload
-    | GotTodos (Result Http.Error (List String))
+    = ReloadTopics
+    | SelectTopic String
+    | GotTopics (Result Http.Error (List String))
+    | GotComments (Result Http.Error (List Comment))
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        Reload ->
-            ( Loading, getTodos )
+        ReloadTopics ->
+            ( { model | topics = Loading }, getTopics )
 
-        GotTodos result ->
+        SelectTopic t ->
+            case model.currentTopic of
+                Topic oldTopic ->
+                    if t == oldTopic then
+                        ( model, Cmd.none )
+
+                    else
+                        ( { model | currentTopic = Topic t }, getComments t )
+
+                NoTopic ->
+                    ( { model | currentTopic = Topic t }, getComments t )
+
+        GotTopics result ->
             case result of
-                Ok todos ->
-                    ( Success todos, Cmd.none )
+                Ok ts ->
+                    ( { model | topics = Success ts }, Cmd.none )
 
                 Err _ ->
-                    ( Failure, Cmd.none )
+                    ( { model | topics = Failure }, Cmd.none )
+
+        GotComments result ->
+            case result of
+                Ok cs ->
+                    ( { model | comments = SuccessC cs }, Cmd.none )
+
+                Err _ ->
+                    ( { model | comments = FailureC }, Cmd.none )
 
 
 
@@ -84,24 +134,31 @@ view model =
         column [ padding 12, spacing 12, width fill ]
             [ el [ size 24 ] <| text "Topics"
             , button [ padding 12 ]
-                { onPress = Just Reload
+                { onPress = Just ReloadTopics
                 , label = text "Refresh"
                 }
-            , viewTopics model
+            , row [ width fill, spaceEvenly ] [ viewTopics model.topics, el [ width fill ] (text "test") ]
             ]
 
 
-viewTopics : Model -> Element Msg
-viewTopics model =
-    case model of
+viewTopics : Status (List String) -> Element Msg
+viewTopics topics =
+    let
+        topicEl t =
+            Input.button [] { onPress = Just (SelectTopic t), label = text t }
+    in
+    case topics of
         Failure ->
             el [] <| text "Failed to load topics"
 
         Loading ->
             text "Loading..."
 
-        Success topics ->
-            column [ spacing 12, width fill ] (List.map text topics)
+        Success [] ->
+            text "No topics available"
+
+        Success ts ->
+            column [ spacing 12, width fill ] (List.map topicEl ts)
 
 
 edges =
@@ -116,14 +173,36 @@ edges =
 -- HTTP
 
 
-getTodos : Cmd Msg
-getTodos =
+getTopics : Cmd Msg
+getTopics =
     Http.get
         { url = "/api/list"
-        , expect = Http.expectJson GotTodos todosDecoder
+        , expect = Http.expectJson GotTopics topicDecoder
         }
 
 
-todosDecoder : Decoder (List String)
-todosDecoder =
+getComments : String -> Cmd Msg
+getComments t =
+    Http.get
+        { url = "/api/" ++ t ++ "/view"
+        , expect = Http.expectJson GotComments commentsDecoder
+        }
+
+
+topicDecoder : Decoder (List String)
+topicDecoder =
     Json.Decode.list string
+
+
+commentsDecoder : Decoder (List Comment)
+commentsDecoder =
+    Json.Decode.list commentDecoder
+
+
+commentDecoder : Decoder Comment
+commentDecoder =
+    map4 Comment
+        (field "id" int)
+        (field "topic" string)
+        (field "text" string)
+        (field "time" string)

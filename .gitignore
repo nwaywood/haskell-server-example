@@ -1,5 +1,6 @@
 .stack-work/
 haskell-server-example.cabal
 elm-stuff
+index.html
 app_db.db
 *~

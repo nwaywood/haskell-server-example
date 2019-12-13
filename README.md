@@ -14,6 +14,12 @@ or
 
 `$ stack run`
 
+To build the front end:
+
+```
+$ cd frontend
+$ elm make src/Main.elm
+```
 
 ## Interactive mode
 
