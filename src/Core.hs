@@ -1,172 +1,114 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# OPTIONS_GHC -fno-warn-unused-matches #-}
 module Core
-  ( runApp
-  , app
+  ( runApplication
   , prepareAppReqs
+  , app
   ) where
 
+import           Control.Applicative                (liftA2)
 import qualified Control.Exception                  as Ex
+import           Control.Monad                      (join)
+
 import           Control.Monad.IO.Class             (liftIO)
+import           Control.Monad.Reader               (asks)
 
 import           Network.Wai                        (Application, Request,
                                                      Response, pathInfo,
-                                                     requestMethod, responseLBS,
+                                                     requestMethod,
                                                      strictRequestBody, responseFile)
 import           Network.Wai.Handler.Warp           (run)
 
-import           Network.HTTP.Types                 (Status, hContentType,
-                                                     status200, status400,
-                                                     status404, status500)
-
-import qualified Data.ByteString.Lazy               as LBS
-
-import           Data.Either                        (either)
-import           Data.Monoid                        ((<>))
-import           Data.Bifunctor                     (first)
+import           Network.HTTP.Types                 (status200)
+import           Data.Bifunctor                     (first, second, bimap)
+import           Data.Either                        (Either (Left, Right),
+                                                     either)
 
 import           Data.Text                          (Text)
+import qualified Data.Text                          as Text
 import           Data.Text.Encoding                 (decodeUtf8)
-import           Data.Text.Lazy.Encoding            (encodeUtf8)
+import           Data.Text.IO                       (hPutStrLn)
 
-import           Waargonaut.Encode                  (Encoder')
-import qualified Waargonaut.Encode                  as E
+import qualified Data.ByteString.Lazy.Char8         as LBS
 
 import           Database.SQLite.SimpleErrors.Types (SQLiteResponse)
 
-import           AppM                       (AppM, liftEither, runAppM)
-import qualified Conf
-import           Conf                       (Conf(..), firstAppConfig)
-import qualified DB
-import           Types                      (ContentType (..),
-                                                     Error (..),
-                                                     RqType (AddRq, ListRq, ViewRq, StaticRq),
-                                                     encodeComment, encodeTopic,
-                                                     mkCommentText, mkTopic,
-                                                     renderContentType)
+import           System.IO                          (stderr)
 
--- Our start-up is becoming more complicated and could fail in new and
--- interesting ways. But we also want to be able to capture these errors in a
--- single type so that we can deal with the entire start-up process as a whole.
-newtype StartUpError
+import qualified Waargonaut.Encode                  as E
+
+import qualified Conf                       as Conf
+import qualified DB                         as DB
+
+import qualified Responses                  as Res
+import           Types                      (Conf(..), ConfigError,
+                                                     ContentType (PlainText),
+                                                     Error (..), RqType (..),
+                                                     DBFilePath(..), confPortToWai,
+                                                     encodeComment, encodeTopic,
+                                                     mkCommentText, mkTopic)
+
+import           AppM                       (App, Env (..), liftEither,
+                                                     runApp)
+
+import           Control.Monad.Except               (ExceptT (..), runExceptT)
+
+data StartUpError
   = DBInitErr SQLiteResponse
+  | ConfErr ConfigError
   deriving Show
 
-runApp :: IO ()
-runApp = do
-  -- Load our configuration
-  cfgE <- prepareAppReqs
-  -- Loading the configuration can fail, so we have to take that into account now.
-  case cfgE of
-    Left _ -> error "Error Starting Application"
-      -- We can't run our app at all! Display the message and exit the application.
-    Right cfg ->
-      -- We have a valid config! We can now complete the various pieces needed to run our
-      -- application. This function 'finally' will execute the first 'IO a', and then, even in the
-      -- case of that value throwing an exception, execute the second 'IO b'. We do this to ensure
-      -- that our DB connection will always be closed when the application finishes, or crashes.
-      Ex.finally (run 8082 $ app cfg) (DB.closeDB cfg)
+runApplication :: IO ()
+runApplication = do
+  appE <- runExceptT prepareAppReqs
+  either print runWithDBConn appE
+  where
+    runWithDBConn env =
+      appWithDB env >> DB.closeDB (envDB env)
 
--- We need to complete the following steps to prepare our app requirements:
---
--- 1) Load the configuration.
--- 2) Attempt to initialise the database.
---
--- Our application configuration is defined in Conf.hs
---
-prepareAppReqs
-  :: IO ( Either StartUpError DB.FirstAppDB )
-prepareAppReqs =
-  first DBInitErr <$> DB.initDB (dbFilePath firstAppConfig)
+    appWithDB env = Ex.finally
+      (run ( confPortToWai . envConfig $ env ) (app env))
+      $ DB.closeDB (envDB env)
 
--- | Some helper functions to make our lives a little more DRY.
-mkResponse
-  :: Status
-  -> ContentType
-  -> LBS.ByteString
-  -> Response
-mkResponse sts ct =
-  responseLBS sts [(hContentType, renderContentType ct)]
+prepareAppReqs :: ExceptT StartUpError IO Env
+prepareAppReqs = ExceptT $ (first ConfErr <$> Conf.parseOptions "files/appconfig.json") >>=
+    (\eErrConf -> case eErrConf of
+        Left err -> pure $ Left err
+        Right conf -> let x = DB.initDB (dbFilePath conf) in
+            bimap DBInitErr (Env (liftIO . print) conf) <$> x)
 
-resp200
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp200 =
-  mkResponse status200
-
-resp404
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp404 =
-  mkResponse status404
-
-resp400
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp400 =
-  mkResponse status400
-
-resp500
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp500 =
-  mkResponse status500
-
-resp200Json
-  :: Encoder' a
-  -> a
-  -> Response
-resp200Json e =
-  resp200 JSON . encodeUtf8 .
-  E.simplePureEncodeTextNoSpaces e
-
--- |
-
--- How has this implementation changed, now that we have an AppM to handle the
--- errors for our application? Could it be simplified? Can it be changed at all?
 app
-  :: DB.FirstAppDB -- ^ Add the Database record to our app so we can use it
+  :: Env
   -> Application
-app db rq cb =
-    runAppM (mkRequest rq >>= handleRequest db)
-        >>= cb . handleRespErr
-        -- (\eErrResp -> cb $ handleRespErr eErrResp)
-    where
-        handleRespErr :: Either Error Response -> Response
-        handleRespErr = either mkErrorResponse id
+app env rq cb =
+    runApp (mkRequest rq >>= handleRequest) env >>= cb . handleRespErr
+        where
+          handleRespErr :: Either Error Response -> Response
+          handleRespErr = either mkErrorResponse id
 
 handleRequest
-  :: DB.FirstAppDB
-  -> RqType
-  -> AppM Response
-handleRequest db rqType = case rqType of
-  -- Notice that we've been able to remove a layer of `fmap` because our `AppM`
-  -- handles all of that for us. Such is the pleasant nature of these
-  -- abstractions.
-  AddRq t c -> resp200 PlainText "Success" <$ DB.addCommentToTopic db t c
-  ViewRq t  -> resp200Json (E.list encodeComment) <$> DB.getComments db t
-  ListRq    -> resp200Json (E.list encodeTopic)   <$> DB.getTopics db
+  :: RqType
+  -> App Response
+handleRequest rqType = case rqType of
+  AddRq t c -> Res.resp200 PlainText "Success" <$ DB.addCommentToTopic t c
+  ViewRq t  -> Res.resp200Json (E.list encodeComment) <$> DB.getComments t
+  ListRq    -> Res.resp200Json (E.list encodeTopic)   <$> DB.getTopics
   StaticRq  -> pure $ responseFile status200 [("Content-Type", "text/html")] "frontend/index.html" Nothing
 
 mkRequest
   :: Request
-  -> AppM RqType
+  -> App RqType
 mkRequest rq =
   liftEither =<< case ( pathInfo rq, requestMethod rq ) of
     -- Commenting on a given topic
-    ( ["api", t, "add"], "POST" ) -> liftIO $ mkAddRequest t <$> strictRequestBody rq
+    ( ["api", t, "add"], "POST" ) -> liftIO (mkAddRequest t <$> strictRequestBody rq)
     -- View the comments on a given topic
     ( ["api", t, "view"], "GET" ) -> pure ( mkViewRequest t )
     -- List the current topics
     ( ["api", "list"], "GET" )    -> pure mkListRequest
-    -- Finally we don't care about any other requests so build an Error response
-    ( "api" : t, _)       -> pure ( Left UnknownRoute )
-    -- Serve the frontend
-    ( _, _) -> pure $ Right StaticRq
+    -- Finally we don't care about any other requests so throw your hands in the air
+    ("api": t, _)                      -> pure ( Left UnknownRoute )
+    -- serve the frontend
+    (_, _) -> pure $ Right StaticRq
 
 mkAddRequest
   :: Text
@@ -190,12 +132,12 @@ mkListRequest =
 mkErrorResponse
   :: Error
   -> Response
-mkErrorResponse UnknownRoute =
-  resp404 PlainText "Unknown Route"
+mkErrorResponse UnknownRoute     =
+  Res.resp404 PlainText "Unknown Route"
 mkErrorResponse EmptyCommentText =
-  resp400 PlainText "Empty Comment"
-mkErrorResponse EmptyTopic =
-  resp400 PlainText "Empty Topic"
-mkErrorResponse ( DBError _ ) =
+  Res.resp400 PlainText "Empty Comment"
+mkErrorResponse EmptyTopic       =
+  Res.resp400 PlainText "Empty Topic"
+mkErrorResponse ( DBError _ )    =
   -- Be a sensible developer and don't leak your DB errors over the internet.
-  resp500 PlainText "Oh noes"
+  Res.resp500 PlainText "OH NOES"

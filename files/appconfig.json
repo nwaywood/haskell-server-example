@@ -1,0 +1,6 @@
+{
+  "pcPort": 3000,
+  "helloMsg": "Functional Programming is neat.",
+  "tableName": "comments",
+  "pcDBFilePath": "app_db.db"
+}

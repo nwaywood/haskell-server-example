@@ -8,11 +8,11 @@ module Types.CommentText
 import           Waargonaut.Encode          (Encoder)
 import qualified Waargonaut.Encode          as E
 
-import           Types.Error        (Error (EmptyCommentText),
-                                             nonEmptyText)
-
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Text                  (Text)
+
+import           Types.Error        (Error (EmptyCommentText),
+                                             nonEmptyText)
 
 newtype CommentText = CommentText Text
   deriving (Show)
