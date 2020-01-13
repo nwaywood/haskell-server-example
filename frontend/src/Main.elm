@@ -193,7 +193,7 @@ view model =
         column [ padding 12, spacing 12, width fill ]
             [ el [ size 24 ] <| text "Amazing Reddit Clone"
             , viewCommentSubmit model
-            , button [ padding 12 ]
+            , button [ padding 8 ]
                 { onPress = Just ReloadTopics
                 , label = text "Refresh Topics"
                 }
